@@ -2,16 +2,16 @@ import os
 import time
 import pandas as pd
 import ta
+import requests
 from dotenv import load_dotenv
 from alpaca_trade_api.rest import REST, TimeFrame
 
-print("🔧 Starting trading bot...")
-
-# Load .env variables
+# Load environment variables
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 BASE_URL = os.getenv("BASE_URL")
+FMP_API_KEY = os.getenv("FMP_API_KEY")
 
 # Connect to Alpaca
 try:
@@ -26,11 +26,22 @@ except Exception as e:
     exit(1)
 
 # Settings
-STOCKS = ['TSLA', 'AAPL', 'NVDA']
-RISK_PER_TRADE = 100
+RISK_PER_TRADE = 300
 STOP_LOSS_PCT = 0.02
 TAKE_PROFIT_PCT = 0.04
-RSI_THRESHOLD = 50  # TEMP for testing — change to 30 later
+RSI_THRESHOLD = 50  # TEMP for testing
+
+def get_top_gainers(limit=5):
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/gainers?apikey={FMP_API_KEY}"
+        res = requests.get(url)
+        data = res.json()
+        top_stocks = [stock["ticker"] for stock in data[:limit]]
+        print(f"🔥 Top {limit} Gainers Today: {top_stocks}")
+        return top_stocks
+    except Exception as e:
+        print(f"❌ Error fetching gainers: {e}")
+        return []
 
 def get_rsi(symbol):
     try:
@@ -40,15 +51,14 @@ def get_rsi(symbol):
             return None
         close = bars['close']
         rsi = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
-        print(f"🔎 RSI for {symbol}: {rsi:.2f}")
         return rsi
     except Exception as e:
         print(f"❌ RSI error for {symbol}: {e}")
         return None
 
-def run_strategy():
+def run_strategy(symbols):
     print("\n🚀 Running strategy...\n")
-    for symbol in STOCKS:
+    for symbol in symbols:
         try:
             rsi = get_rsi(symbol)
             if rsi is None:
@@ -79,7 +89,7 @@ def run_strategy():
                     )
 
                     print(f"✅ TRADE: {qty}x {symbol} @ ${price:.2f}")
-                    print(f"   ⛔ Stop: ${stop_loss:.2f} | 🎯 Take-Profit: ${take_profit:.2f}")
+                    print(f"   ⛔ Stop: ${stop_loss:.2f} | 🎯 Target: ${take_profit:.2f}")
                 except Exception as e:
                     print(f"❌ Trade failed for {symbol}: {e}")
             else:
@@ -89,7 +99,8 @@ def run_strategy():
 
     print("\n✅ Strategy run complete.")
 
-# Run the bot once
+# Run
 print("🔁 Starting bot now...")
-run_strategy()
+top_gainers = get_top_gainers(limit=5)
+run_strategy(top_gainers)
 print("✅ Script finished executing.\n")
