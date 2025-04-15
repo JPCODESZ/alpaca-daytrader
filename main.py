@@ -1,7 +1,4 @@
 
-python
-Copy
-Edit
 import os
 import time
 import schedule
