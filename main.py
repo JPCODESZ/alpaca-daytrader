@@ -1,49 +1,64 @@
+
+python
+Copy
+Edit
 import os
 import time
 import schedule
+import pandas as pd
 from dotenv import load_dotenv
 from alpaca_trade_api.rest import REST
 import ta
-import pandas as pd
 
 # Load environment variables
 load_dotenv()
 
+# Alpaca API credentials from .env
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 BASE_URL = os.getenv("BASE_URL")
 
+# Connect to Alpaca
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
-# Stock settings
-STOCKS = ['TSLA', 'AAPL', 'NVDA']
-RISK_PER_TRADE = 100  # dollars per trade
-STOP_LOSS_PCT = 0.02
-TAKE_PROFIT_PCT = 0.04
+# Configurations
+STOCKS = ['TSLA', 'AAPL', 'NVDA']  # Add more tickers if needed
+RISK_PER_TRADE = 100               # Dollars per trade
+STOP_LOSS_PCT = 0.02               # 2% stop-loss
+TAKE_PROFIT_PCT = 0.04             # 4% take-profit
 
+# Get RSI indicator
 def get_rsi(symbol):
-    barset = api.get_bars(symbol, '15Min', limit=50).df
-    if barset.empty:
+    try:
+        bars = api.get_bars(symbol, '15Min', limit=50).df
+        if bars.empty:
+            print(f"⚠️ No data for {symbol}")
+            return None
+        close_prices = bars['close']
+        rsi = ta.momentum.RSIIndicator(close_prices).rsi().iloc[-1]
+        return rsi
+    except Exception as e:
+        print(f"❌ Failed to get RSI for {symbol}: {e}")
         return None
-    close = barset['close']
-    rsi = ta.momentum.RSIIndicator(close).rsi().iloc[-1]
-    return rsi
 
+# Main trading function
 def run_strategy():
-    for stock in STOCKS:
+    print("🚀 Starting strategy run...")
+    for symbol in STOCKS:
         try:
-            rsi = get_rsi(stock)
+            rsi = get_rsi(symbol)
             if rsi is None:
                 continue
-            print(f"{stock} RSI: {rsi:.2f}")
-            if rsi < 30:  # Oversold condition
-                price = api.get_last_trade(stock).price
+
+            print(f"{symbol} RSI: {rsi:.2f}")
+            if rsi < 30:  # Oversold signal
+                price = api.get_last_trade(symbol).price
                 qty = int(RISK_PER_TRADE / price)
                 stop_loss = round(price * (1 - STOP_LOSS_PCT), 2)
                 take_profit = round(price * (1 + TAKE_PROFIT_PCT), 2)
 
                 api.submit_order(
-                    symbol=stock,
+                    symbol=symbol,
                     qty=qty,
                     side='buy',
                     type='market',
@@ -52,13 +67,19 @@ def run_strategy():
                     stop_loss={'stop_price': stop_loss},
                     take_profit={'limit_price': take_profit}
                 )
-                print(f"✅ Bought {qty} shares of {stock} at ${price}")
+
+                print(f"✅ Placed buy order for {qty} shares of {symbol} at ${price:.2f}")
+            else:
+                print(f"⏸️ No trade: {symbol} RSI is not oversold.")
         except Exception as e:
-            print(f"Error trading {stock}: {e}")
+            print(f"❌ Error processing {symbol}: {e}")
 
-schedule.every().day.at("09:35").do(run_strategy)
+# Run strategy once on boot
+print("🔁 Running bot immediately on startup...")
+run_strategy()
 
-print("🤖 Bot is running... waiting for 09:35 AM EST")
+# Optional: repeat every X minutes (can comment out if not needed)
+schedule.every(30).minutes.do(run_strategy)
 
 while True:
     schedule.run_pending()
