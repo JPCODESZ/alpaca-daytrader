@@ -5,7 +5,7 @@ import ta
 from dotenv import load_dotenv
 from alpaca_trade_api.rest import REST, TimeFrame
 
-# Load env vars
+# Load environment variables
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
@@ -24,7 +24,6 @@ RISK_PER_TRADE = 300
 STOP_LOSS_PCT = 0.03
 TAKE_PROFIT_PCT = 0.06
 MIN_PRICE = 2.00
-
 CRYPTO_SYMBOLS = ["BTCUSD", "ETHUSD", "SOLUSD"]
 
 def get_top_losers(limit=3):
@@ -37,7 +36,7 @@ def get_top_losers(limit=3):
         print(f"❌ Failed to fetch top losers: {e}")
         return []
 
-def get_rsi(symbol, timeframe=TimeFrame.Minute, bars=50):
+def get_rsi(symbol, timeframe=TimeFrame.FifteenMinute, bars=50):
     try:
         df = api.get_bars(symbol, timeframe, limit=bars).df
         if df.empty: return None
@@ -90,22 +89,32 @@ def manage_open_trades():
         positions = api.list_positions()
         for p in positions:
             symbol = p.symbol
-            qty = int(p.qty)
+            qty = int(float(p.qty))
+            if qty <= 0:
+                continue
+
             pl_pct = float(p.unrealized_plpc)
 
-            if pl_pct >= 0.06:
-                api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
-                print(f"🎯 Sold {symbol} — hit take profit")
+            try:
+                if pl_pct >= 0.06:
+                    api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
+                    print(f"🎯 Sold {symbol} — hit take profit")
 
-            elif pl_pct <= -0.03:
-                api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
-                print(f"🛑 Sold {symbol} — hit stop loss")
+                elif pl_pct <= -0.03:
+                    api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
+                    print(f"🛑 Sold {symbol} — hit stop loss")
+            except Exception as e:
+                print(f"❌ Error selling {symbol}: {e}")
     except Exception as e:
         print(f"❌ Trade manager error: {e}")
 
-# === Run Bot ===
+# === 24/7 Bot Loop ===
 if __name__ == "__main__":
-    stock_symbols = get_top_losers()
-    all_symbols = stock_symbols + CRYPTO_SYMBOLS
-    run_strategy(all_symbols)
-    manage_open_trades()
+    while True:
+        stock_symbols = get_top_losers()
+        all_symbols = stock_symbols + CRYPTO_SYMBOLS
+        run_strategy(all_symbols)
+        manage_open_trades()
+
+        print("🕒 Sleeping 10 mins...\n")
+        time.sleep(600)
