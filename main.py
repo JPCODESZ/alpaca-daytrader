@@ -55,10 +55,12 @@ def run_strategy():
         if rsi < 50:  # TEMP threshold for testing
             try:
                 price = float(api.get_latest_trade(symbol).price)
-                qty = max(1, int(RISK_PER_TRADE / price))  # Ensure at least 1 share
-if qty < 1:
-    print(f"⚠️ Skipping {symbol}: price too high for risk amount (${RISK_PER_TRADE})")
-    continue
+                qty = int(RISK_PER_TRADE / price)
+
+                if qty < 1:
+                    print(f"⚠️ Skipping {symbol}: price too high for ${RISK_PER_TRADE}")
+                    continue
+
                 stop_loss = round(price * (1 - STOP_LOSS_PCT), 2)
                 take_profit = round(price * (1 + TAKE_PROFIT_PCT), 2)
 
@@ -72,13 +74,10 @@ if qty < 1:
                     stop_loss={'stop_price': stop_loss},
                     take_profit={'limit_price': take_profit}
                 )
+
                 print(f"✅ Order placed for {qty}x {symbol} at ${price:.2f}")
                 print(f"   ⛔ Stop: ${stop_loss:.2f} | 🎯 Target: ${take_profit:.2f}")
             except Exception as e:
                 print(f"❌ Failed to trade {symbol}: {e}")
         else:
             print(f"⏸️ Skipping {symbol} — RSI is not oversold.")
-# === Run Bot Immediately ===
-print("🔁 Starting bot now...")
-run_strategy()
-print("✅ Bot finished. Ready for next run.")
