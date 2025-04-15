@@ -3,8 +3,3 @@ pandas
 ta
 schedule
 python-dotenv
-
-
-git add requirements.txt
-git commit -m "Add python-dotenv to fix Render deploy"
-git push
