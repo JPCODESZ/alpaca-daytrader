@@ -25,7 +25,7 @@ STOP_LOSS_PCT = 0.03
 TAKE_PROFIT_PCT = 0.06
 MIN_PRICE = 2.00
 
-CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD"]
+CRYPTO_SYMBOLS = ["BTCUSD", "ETHUSD", "SOLUSD"]
 
 def get_top_losers(limit=3):
     try:
