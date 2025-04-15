@@ -55,7 +55,10 @@ def run_strategy():
         if rsi < 50:  # TEMP threshold for testing
             try:
                 price = float(api.get_latest_trade(symbol).price)
-                qty = int(RISK_PER_TRADE / price)
+                qty = max(1, int(RISK_PER_TRADE / price))  # Ensure at least 1 share
+if qty < 1:
+    print(f"⚠️ Skipping {symbol}: price too high for risk amount (${RISK_PER_TRADE})")
+    continue
                 stop_loss = round(price * (1 - STOP_LOSS_PCT), 2)
                 take_profit = round(price * (1 + TAKE_PROFIT_PCT), 2)
 
