@@ -52,9 +52,9 @@ def run_strategy():
         if rsi is None:
             continue
         print(f"{symbol} RSI: {rsi:.2f}")
-        if rsi < 50:  # TEMP: Increase threshold to trigger trade for testing
+        if rsi < 50:  # TEMP threshold for testing
             try:
-            price = float(api.get_latest_trade(symbol).price)
+                price = float(api.get_latest_trade(symbol).price)
                 qty = int(RISK_PER_TRADE / price)
                 stop_loss = round(price * (1 - STOP_LOSS_PCT), 2)
                 take_profit = round(price * (1 + TAKE_PROFIT_PCT), 2)
@@ -75,7 +75,6 @@ def run_strategy():
                 print(f"❌ Failed to trade {symbol}: {e}")
         else:
             print(f"⏸️ Skipping {symbol} — RSI is not oversold.")
-
 # === Run Bot Immediately ===
 print("🔁 Starting bot now...")
 run_strategy()
