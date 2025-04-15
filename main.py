@@ -1,7 +1,6 @@
 import os
 import time
 import requests
-import pandas as pd
 import ta
 from dotenv import load_dotenv
 from alpaca_trade_api.rest import REST, TimeFrame
@@ -19,35 +18,52 @@ account = api.get_account()
 print("✅ Connected to Alpaca")
 print(f"💰 Cash: ${account.cash} | Buying Power: ${account.buying_power}")
 
-# Constants
+# === Config ===
 RSI_THRESHOLD = 30
 RISK_PER_TRADE = 300
 STOP_LOSS_PCT = 0.03
 TAKE_PROFIT_PCT = 0.06
 MIN_PRICE = 2.00
 
-def get_top_losers(limit=5):
+CRYPTO_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD"]
+
+def get_top_losers(limit=3):
     try:
         url = f"https://financialmodelingprep.com/api/v3/losers?apikey={FMP_API_KEY}"
         res = requests.get(url)
         data = res.json()
-        symbols = [item['ticker'] for item in data[:limit]]
-        print(f"📉 Top losers: {symbols}")
-        return symbols
+        return [item['ticker'] for item in data[:limit]]
     except Exception as e:
-        print(f"❌ Error fetching losers: {e}")
+        print(f"❌ Failed to fetch top losers: {e}")
         return []
 
-def get_rsi(symbol):
+def get_rsi(symbol, timeframe=TimeFrame.Minute, bars=50):
     try:
-        bars = api.get_bars(symbol, TimeFrame.Minute, limit=50).df
-        if bars.empty:
-            return None
-        rsi = ta.momentum.RSIIndicator(bars['close']).rsi().iloc[-1]
+        df = api.get_bars(symbol, timeframe, limit=bars).df
+        if df.empty: return None
+        rsi = ta.momentum.RSIIndicator(df['close']).rsi().iloc[-1]
         return rsi
     except Exception as e:
         print(f"❌ RSI error for {symbol}: {e}")
         return None
+
+def place_trade(symbol, price):
+    qty = max(1, int(RISK_PER_TRADE / price))
+    stop = round(price * (1 - STOP_LOSS_PCT), 2)
+    target = round(price * (1 + TAKE_PROFIT_PCT), 2)
+
+    api.submit_order(
+        symbol=symbol,
+        qty=qty,
+        side='buy',
+        type='market',
+        time_in_force='gtc',
+        order_class='bracket',
+        stop_loss={'stop_price': stop},
+        take_profit={'limit_price': target}
+    )
+
+    print(f"✅ BUY {qty}x {symbol} @ ${price:.2f} | ⛔ Stop: ${stop:.2f} | 🎯 Target: ${target:.2f}")
 
 def run_strategy(symbols):
     print("\n🚀 Running strategy...\n")
@@ -58,32 +74,18 @@ def run_strategy(symbols):
                 continue
 
             price = float(api.get_latest_trade(symbol).price)
-            print(f"{symbol} RSI: {rsi:.2f}, Price: ${price:.2f}")
+            print(f"🔎 {symbol} RSI: {rsi:.2f} @ ${price:.2f}")
 
             if rsi < RSI_THRESHOLD and price > MIN_PRICE:
-                qty = max(1, int(RISK_PER_TRADE / price))
-                stop_price = round(price * (1 - STOP_LOSS_PCT), 2)
-                take_profit = round(price * (1 + TAKE_PROFIT_PCT), 2)
-
-                api.submit_order(
-                    symbol=symbol,
-                    qty=qty,
-                    side='buy',
-                    type='market',
-                    time_in_force='gtc',
-                    order_class='bracket',
-                    stop_loss={'stop_price': stop_price},
-                    take_profit={'limit_price': take_profit}
-                )
-                print(f"✅ BUY {qty}x {symbol} @ ${price:.2f} | ⛔ Stop: ${stop_price:.2f} | 🎯 Target: ${take_profit:.2f}")
+                place_trade(symbol, price)
             else:
-                print(f"⏸️ Skipping {symbol} — Conditions not met.")
+                print(f"⏸️ Skipping {symbol} — RSI > {RSI_THRESHOLD}")
         except Exception as e:
-            print(f"❌ Error with {symbol}: {e}")
-    print("\n✅ Strategy run complete.\n")
+            print(f"❌ Strategy error on {symbol}: {e}")
+    print("\n✅ Strategy complete.\n")
 
 def manage_open_trades():
-    print("🔄 Managing open trades...")
+    print("🔄 Managing open positions...")
     try:
         positions = api.list_positions()
         for p in positions:
@@ -93,16 +95,17 @@ def manage_open_trades():
 
             if pl_pct >= 0.06:
                 api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
-                print(f"🎯 Took profit on {symbol} (+6%)")
+                print(f"🎯 Sold {symbol} — hit take profit")
 
             elif pl_pct <= -0.03:
                 api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
-                print(f"🛑 Stopped loss on {symbol} (-3%)")
+                print(f"🛑 Sold {symbol} — hit stop loss")
     except Exception as e:
-        print(f"❌ Trade management error: {e}")
+        print(f"❌ Trade manager error: {e}")
 
-# MAIN
+# === Run Bot ===
 if __name__ == "__main__":
-    losers = get_top_losers(limit=5)
-    run_strategy(losers)
+    stock_symbols = get_top_losers()
+    all_symbols = stock_symbols + CRYPTO_SYMBOLS
+    run_strategy(all_symbols)
     manage_open_trades()
