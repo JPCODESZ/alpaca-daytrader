@@ -3,27 +3,26 @@ import time
 import requests
 import ta
 from dotenv import load_dotenv
-from alpaca_trade_api.rest import REST, TimeFrame
+from alpaca_trade_api.rest import REST, TimeFrame, TimeFrameUnit
 
-# Load environment variables
+# Load env vars
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 BASE_URL = os.getenv("BASE_URL")
 FMP_API_KEY = os.getenv("FMP_API_KEY")
 
-# Alpaca connection
 api = REST(API_KEY, API_SECRET, BASE_URL)
 account = api.get_account()
 print("✅ Connected to Alpaca")
 print(f"💰 Cash: ${account.cash} | Buying Power: ${account.buying_power}")
 
 # === Config ===
-RSI_THRESHOLD = 30
+RSI_THRESHOLD = 40  # lowered to increase test trading
 RISK_PER_TRADE = 300
 STOP_LOSS_PCT = 0.03
 TAKE_PROFIT_PCT = 0.06
-MIN_PRICE = 2.00
+MIN_PRICE = 1.00
 CRYPTO_SYMBOLS = ["BTCUSD", "ETHUSD", "SOLUSD"]
 
 def get_top_losers(limit=3):
@@ -36,10 +35,12 @@ def get_top_losers(limit=3):
         print(f"❌ Failed to fetch top losers: {e}")
         return []
 
-def get_rsi(symbol, timeframe=TimeFrame.FifteenMinutes, bars=50):
+def get_rsi(symbol, timeframe=TimeFrame(15, TimeFrameUnit.Minute), bars=50):
     try:
         df = api.get_bars(symbol, timeframe, limit=bars).df
-        if df.empty: return None
+        if df.empty:
+            print(f"📉 No price data for {symbol}")
+            return None
         rsi = ta.momentum.RSIIndicator(df['close']).rsi().iloc[-1]
         return rsi
     except Exception as e:
@@ -73,12 +74,12 @@ def run_strategy(symbols):
                 continue
 
             price = float(api.get_latest_trade(symbol).price)
-            print(f"🔎 {symbol} RSI: {rsi:.2f} @ ${price:.2f}")
+            print(f"🔍 {symbol} RSI: {rsi:.2f} | Price: ${price:.2f}")
 
             if rsi < RSI_THRESHOLD and price > MIN_PRICE:
                 place_trade(symbol, price)
             else:
-                print(f"⏸️ Skipping {symbol} — RSI > {RSI_THRESHOLD}")
+                print(f"⏸️ Skipping {symbol} — RSI: {rsi:.2f}, MIN_PRICE: ${MIN_PRICE}")
         except Exception as e:
             print(f"❌ Strategy error on {symbol}: {e}")
     print("\n✅ Strategy complete.\n")
@@ -98,23 +99,22 @@ def manage_open_trades():
             try:
                 if pl_pct >= 0.06:
                     api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
-                    print(f"🎯 Sold {symbol} — hit take profit")
+                    print(f"🎯 Sold {symbol} — take profit")
 
                 elif pl_pct <= -0.03:
                     api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='gtc')
-                    print(f"🛑 Sold {symbol} — hit stop loss")
+                    print(f"🛑 Sold {symbol} — stop loss")
             except Exception as e:
                 print(f"❌ Error selling {symbol}: {e}")
     except Exception as e:
         print(f"❌ Trade manager error: {e}")
 
-# === 24/7 Bot Loop ===
+# === Main Loop ===
 if __name__ == "__main__":
     while True:
         stock_symbols = get_top_losers()
         all_symbols = stock_symbols + CRYPTO_SYMBOLS
         run_strategy(all_symbols)
         manage_open_trades()
-
-        print("🕒 Sleeping 10 mins...\n")
+        print("🕒 Sleeping 10 minutes...\n")
         time.sleep(600)
