@@ -36,7 +36,7 @@ def get_top_losers(limit=3):
         print(f"❌ Failed to fetch top losers: {e}")
         return []
 
-def get_rsi(symbol, timeframe=TimeFrame.FifteenMinute, bars=50):
+def get_rsi(symbol, timeframe=TimeFrame.FifteenMinutes, bars=50):
     try:
         df = api.get_bars(symbol, timeframe, limit=bars).df
         if df.empty: return None
