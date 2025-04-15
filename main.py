@@ -54,7 +54,7 @@ def run_strategy():
         print(f"{symbol} RSI: {rsi:.2f}")
         if rsi < 50:  # TEMP: Increase threshold to trigger trade for testing
             try:
-                price = api.get_last_trade(symbol).price
+            price = float(api.get_latest_trade(symbol).price)
                 qty = int(RISK_PER_TRADE / price)
                 stop_loss = round(price * (1 - STOP_LOSS_PCT), 2)
                 take_profit = round(price * (1 + TAKE_PROFIT_PCT), 2)
