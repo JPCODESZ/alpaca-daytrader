@@ -2,76 +2,89 @@ import os
 import time
 import logging
 from alpaca_trade_api.rest import REST, TimeFrame
-from alpaca_trade_api.rest import TimeFrameUnit
-import pandas as pd
 from ta.momentum import RSIIndicator
+import pandas as pd
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Load API credentials from environment
+# Load environment variables
 API_KEY = os.getenv("APCA_API_KEY_ID")
 API_SECRET = os.getenv("APCA_API_SECRET_KEY")
 BASE_URL = os.getenv("APCA_API_BASE_URL")
 
 if not API_KEY or not API_SECRET or not BASE_URL:
-    raise ValueError("❌ Missing API credentials. Check your .env or environment variables.")
+    raise ValueError("❌ Missing API credentials!")
 
-# Connect to Alpaca
+# Initialize API
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
-# Settings
-symbols = ["AAPL", "TSLA", "NVDA"]
-position_size = 1000  # dollars per trade
-rsi_buy_threshold = 30
-rsi_sell_threshold = 70
+# Strategy thresholds (more aggressive)
+RSI_BUY = 45
+RSI_SELL = 60
 
-# Strategy function
+# Add volatile tickers
+symbols = ["AAPL", "TSLA", "NVDA", "TQQQ", "SOXL", "RIOT", "MARA"]
+
+# Fetch RSI
+def get_rsi(symbol):
+    try:
+        bars = api.get_bars(symbol, TimeFrame.Minute, limit=100).df
+        if bars.empty:
+            return None
+        close = bars['close']
+        rsi = RSIIndicator(close).rsi().iloc[-1]
+        return round(rsi, 2)
+    except Exception as e:
+        logging.error(f"❌ Error calculating RSI for {symbol}: {e}")
+        return None
+
+# Fetch current price
+def get_price(symbol):
+    try:
+        quote = api.get_latest_trade(symbol)
+        return quote.price
+    except Exception as e:
+        logging.error(f"❌ Error fetching price for {symbol}: {e}")
+        return None
+
+# Main trading strategy
 def run_strategy():
     logging.info("🔄 Checking account and stock prices...")
-    account = api.get_account()
-    logging.info(f"💰 Cash: ${account.cash} | Buying Power: ${account.buying_power}")
+    try:
+        account = api.get_account()
+        cash = float(account.cash)
+        buying_power = float(account.buying_power)
+        logging.info(f"💰 Cash: ${cash} | Buying Power: ${buying_power}")
+    except Exception as e:
+        logging.error(f"❌ Error getting account: {e}")
+        return
 
     for symbol in symbols:
+        price = get_price(symbol)
+        rsi = get_rsi(symbol)
+        if price is None or rsi is None:
+            continue
+
+        logging.info(f"📈 {symbol} price: ${price} | RSI: {rsi}")
         try:
-            bars = api.get_bars(symbol, TimeFrame(15, TimeFrameUnit.Minute), limit=50).df
-            if bars.empty:
-                logging.warning(f"⚠️ No bar data for {symbol}")
-                continue
-
-            rsi = RSIIndicator(bars['close']).rsi()
-            latest_rsi = rsi.iloc[-1]
-            current_price = bars['close'].iloc[-1]
-
-            logging.info(f"📈 {symbol} price: ${current_price:.2f} | RSI: {latest_rsi:.2f}")
-
-            position_qty = 0
-            try:
-                position = api.get_position(symbol)
-                position_qty = float(position.qty)
-            except:
-                pass  # No position
-
-            if latest_rsi < rsi_buy_threshold and position_qty == 0:
-                qty_to_buy = int(position_size / current_price)
-                api.submit_order(symbol=symbol, qty=qty_to_buy, side='buy', type='market', time_in_force='gtc')
-                logging.info(f"✅ BUY {symbol} | Qty: {qty_to_buy} | Price: ${current_price:.2f}")
-
-            elif latest_rsi > rsi_sell_threshold and position_qty > 0:
-                api.submit_order(symbol=symbol, qty=position_qty, side='sell', type='market', time_in_force='gtc')
-                logging.info(f"🚨 SELL {symbol} | Qty: {position_qty} | Price: ${current_price:.2f}")
-
+            # More aggressive: trade even at tighter RSI margins
+            if rsi < RSI_BUY:
+                qty = int((buying_power * 0.05) / price)  # 5% of buying power
+                if qty > 0:
+                    api.submit_order(symbol=symbol, qty=qty, side='buy', type='market', time_in_force='gtc')
+                    logging.info(f"🟢 BUY {qty} shares of {symbol} at ${price}")
+            elif rsi > RSI_SELL:
+                positions = api.list_positions()
+                for p in positions:
+                    if p.symbol == symbol:
+                        api.submit_order(symbol=symbol, qty=int(p.qty), side='sell', type='market', time_in_force='gtc')
+                        logging.info(f"🔴 SELL {p.qty} shares of {symbol} at ${price}")
         except Exception as e:
-            logging.error(f"❌ Error handling {symbol}: {e}")
+            logging.error(f"❌ Trade error for {symbol}: {e}")
 
-# Run loop
+# Run the strategy loop
 while True:
-    try:
-        run_strategy()
-    except Exception as e:
-        logging.error(f"🚫 Strategy error: {e}")
+    run_strategy()
     logging.info("⏳ Waiting 60 seconds...")
     time.sleep(60)
