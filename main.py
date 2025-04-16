@@ -6,21 +6,22 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load .env if running locally
 load_dotenv()
-API_KEY = os.getenv("APCA_API_KEY_ID")
-API_SECRET = os.getenv("APCA_API_SECRET_KEY")
-# Make sure BASE_URL does NOT include '/v2'
-BASE_URL = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
-# Configuration for trading
-SYMBOLS = ["AAPL", "TSLA", "NVDA"]  # Symbols you want to trade
+# Use env vars if available, else fallback to direct values (for dev)
+API_KEY = os.getenv("APCA_API_KEY_ID", "PKHAJ5KK14MHZSVTMD05")
+API_SECRET = os.getenv("APCA_API_SECRET_KEY", "444XYfuXVes0ta4LDFBENrkdi44HCeJOobfIOn2J")
+BASE_URL = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")  # DO NOT use /v2
+
+# Symbols to watch
+SYMBOLS = ["AAPL", "TSLA", "NVDA"]
 RSI_PERIOD = 14
 RSI_THRESHOLD = 30
-TRADE_AMOUNT = 1000  # USD per trade
-SLEEP_SECONDS = 300  # 5 minutes between cycles
+TRADE_AMOUNT = 1000
+SLEEP_SECONDS = 300  # 5 min
 
-# Setup Alpaca API connection
+# Connect to Alpaca
 api = REST(API_KEY, API_SECRET, BASE_URL)
 account = api.get_account()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
@@ -31,7 +32,6 @@ def get_cash():
     return float(api.get_account().cash)
 
 def get_price(symbol):
-    # Get the latest trade price
     trade = api.get_latest_trade(symbol)
     return float(trade.price)
 
@@ -61,9 +61,9 @@ def place_order(symbol, qty, price):
             qty=qty,
             side='buy',
             type='limit',
-            time_in_force='day',      # For extended hours, must be 'day'
+            time_in_force='day',
             limit_price=price,
-            extended_hours=True       # Enable pre-market/post-market
+            extended_hours=True
         )
         logging.info(f"✅ Order placed: BUY {qty} {symbol} at ${price:.2f}")
     except Exception as e:
@@ -87,7 +87,7 @@ def run_strategy(symbols):
             if qty >= 1 and cash >= price * qty:
                 place_order(symbol, qty, price)
             else:
-                logging.warning(f"⚠️ Skipping {symbol}: insufficient funds or calculated qty < 1")
+                logging.warning(f"⚠️ Skipping {symbol}: insufficient funds or qty < 1")
         else:
             logging.info(f"⏸️ Skipping {symbol} — RSI {rsi:.2f} is above threshold")
     logging.info("✅ Strategy run complete.")
@@ -102,30 +102,14 @@ def manage_open_trades():
             if qty <= 0:
                 continue
             pl_pct = float(pos.unrealized_plpc)
-            # Sell if profit is 6% or more, or loss is 3% or more
-            try:
-                if pl_pct >= 0.06:
-                    api.submit_order(
-                        symbol=symbol,
-                        qty=qty,
-                        side='sell',
-                        type='market',
-                        time_in_force='day'
-                    )
-                    logging.info(f"🎯 Sold {symbol} — reached take profit ({pl_pct*100:.2f}%)")
-                elif pl_pct <= -0.03:
-                    api.submit_order(
-                        symbol=symbol,
-                        qty=qty,
-                        side='sell',
-                        type='market',
-                        time_in_force='day'
-                    )
-                    logging.info(f"🛑 Sold {symbol} — reached stop loss ({pl_pct*100:.2f}%)")
-            except Exception as e:
-                logging.error(f"❌ Error executing sell for {symbol}: {e}")
+            if pl_pct >= 0.06:
+                api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='day')
+                logging.info(f"🎯 Sold {symbol} — take profit hit ({pl_pct*100:.2f}%)")
+            elif pl_pct <= -0.03:
+                api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='day')
+                logging.info(f"🛑 Sold {symbol} — stop loss hit ({pl_pct*100:.2f}%)")
     except Exception as e:
-        logging.error(f"❌ Trade management error: {e}")
+        logging.error(f"❌ Error managing trades: {e}")
 
 if __name__ == "__main__":
     while True:
