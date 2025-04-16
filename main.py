@@ -30,7 +30,7 @@ def run_strategy():
         symbols = ["AAPL", "TSLA", "NVDA"]
         for symbol in symbols:
             try:
-                price = api.get_last_trade(symbol).price
+                price = api.get_latest_trade(symbol).price
                 logging.info(f"📈 {symbol} price: ${price}")
             except Exception as e:
                 logging.error(f"❌ Error fetching price for {symbol}: {e}")
