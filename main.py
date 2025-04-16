@@ -1,50 +1,47 @@
-import time
 import os
+import time
 import logging
 from alpaca_trade_api.rest import REST, TimeFrame
 import pandas as pd
 import numpy as np
-from dotenv import load_dotenv
 
-load_dotenv()
+# === CONFIG === #
+API_KEY = "PKHAJ5KK14MHZSVTMD05"
+API_SECRET = "444XYfuXVes0ta4LDFBENrkdi44HCeJOobfIOn2J"
+BASE_URL = "https://paper-api.alpaca.markets/v2"  # Corrected endpoint
 
-# === CONFIGURATION === #
-API_KEY = os.getenv("APCA_API_KEY_ID")
-API_SECRET = os.getenv("APCA_API_SECRET_KEY")
-BASE_URL = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")
-
+SYMBOLS = ["AAPL", "TSLA", "NVDA"]  # Add or remove symbols here
+RSI_PERIOD = 14
 RSI_THRESHOLD = 30
-TRADE_AMOUNT = 1000  # dollars per trade
-SYMBOLS = ["AAPL", "TSLA", "NVDA"]  # add more if you'd like
-SLEEP_INTERVAL = 300  # in seconds
+TRADE_AMOUNT = 1000  # USD per trade
+SLEEP_SECONDS = 300  # Time between loops
 
-# === INIT API === #
+# === SETUP === #
 api = REST(API_KEY, API_SECRET, BASE_URL)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 def get_cash():
-    account = api.get_account()
-    return float(account.cash)
+    return float(api.get_account().cash)
 
 def get_price(symbol):
-    quote = api.get_latest_trade(symbol)
-    return float(quote.price)
+    trade = api.get_latest_trade(symbol)
+    return float(trade.price)
 
-def get_rsi(symbol, period=14):
-    bars = api.get_bars(symbol, TimeFrame.Minute, limit=100).df
-    if bars.empty or len(bars) < period + 1:
+def get_rsi(symbol, period=RSI_PERIOD):
+    try:
+        bars = api.get_bars(symbol, TimeFrame.Minute, limit=100).df
+        close = bars['close']
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
+        avg_gain = gain.rolling(window=period).mean()
+        avg_loss = loss.rolling(window=period).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi.iloc[-1]
+    except Exception as e:
+        logging.warning(f"⚠️ RSI error for {symbol}: {e}")
         return None
-
-    close = bars['close']
-    delta = close.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.iloc[-1]
 
 def place_order(symbol, qty, price):
     try:
@@ -57,40 +54,37 @@ def place_order(symbol, qty, price):
             limit_price=price,
             extended_hours=True
         )
-        logging.info(f"✅ Order placed: BUY {qty} {symbol} at ${price}")
+        logging.info(f"✅ Placed order: BUY {qty} {symbol} at ${price}")
     except Exception as e:
-        logging.error(f"❌ Failed to place order for {symbol}: {e}")
+        logging.error(f"❌ Failed order for {symbol}: {e}")
 
-def run_strategy():
-    logging.info("🔁 Starting strategy loop...")
+def run_bot():
+    logging.info("🔁 Running strategy loop...")
     cash = get_cash()
-    logging.info(f"💰 Cash available: ${cash:.2f}")
+    logging.info(f"💰 Cash: ${cash:.2f}")
 
     for symbol in SYMBOLS:
         logging.info(f"🔎 Checking {symbol}")
         rsi = get_rsi(symbol)
         if rsi is None:
-            logging.warning(f"⚠️ Could not calculate RSI for {symbol}")
             continue
 
-        logging.info(f"{symbol} RSI: {rsi:.2f}")
+        logging.info(f"📉 {symbol} RSI: {rsi:.2f}")
         if rsi < RSI_THRESHOLD:
             price = get_price(symbol)
             qty = int(TRADE_AMOUNT // price)
             if qty >= 1 and cash >= price * qty:
                 place_order(symbol, qty, price)
             else:
-                logging.warning(f"⚠️ Not enough cash or qty too small for {symbol}")
+                logging.info(f"⚠️ Skipping {symbol} — insufficient funds or qty too low")
         else:
-            logging.info(f"⏸️ Skipping {symbol} — RSI not low enough")
+            logging.info(f"⏸️ Skipping {symbol} — RSI > {RSI_THRESHOLD}")
 
-# === LOOP === #
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
     while True:
         try:
-            run_strategy()
-            time.sleep(SLEEP_INTERVAL)
+            run_bot()
+            time.sleep(SLEEP_SECONDS)
         except Exception as e:
             logging.error(f"Unhandled error: {e}")
             time.sleep(30)
