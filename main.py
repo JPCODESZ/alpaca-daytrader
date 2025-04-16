@@ -9,17 +9,17 @@ from dotenv import load_dotenv
 # Load .env if running locally
 load_dotenv()
 
-# Use env vars if available, else fallback to direct values (for dev)
+# API Credentials (fallbacks if .env isn't set)
 API_KEY = os.getenv("APCA_API_KEY_ID", "PKHAJ5KK14MHZSVTMD05")
 API_SECRET = os.getenv("APCA_API_SECRET_KEY", "444XYfuXVes0ta4LDFBENrkdi44HCeJOobfIOn2J")
-BASE_URL = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")  # DO NOT use /v2
+BASE_URL = os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets")
 
-# Symbols to watch
+# Trading Configuration
 SYMBOLS = ["AAPL", "TSLA", "NVDA"]
 RSI_PERIOD = 14
 RSI_THRESHOLD = 30
-TRADE_AMOUNT = 1000
-SLEEP_SECONDS = 300  # 5 min
+TRADE_AMOUNT = 1000  # $ per trade
+SLEEP_SECONDS = 300  # 5 minutes
 
 # Connect to Alpaca
 api = REST(API_KEY, API_SECRET, BASE_URL)
@@ -39,7 +39,7 @@ def get_rsi(symbol, period=RSI_PERIOD):
     try:
         bars = api.get_bars(symbol, TimeFrame.Minute, limit=100).df
         if bars.empty or len(bars) < period + 1:
-            logging.warning(f"⚠️ Insufficient data for {symbol}")
+            logging.warning(f"⚠️ Not enough data for {symbol}")
             return None
         close = bars['close']
         delta = close.diff()
@@ -65,21 +65,21 @@ def place_order(symbol, qty, price):
             limit_price=price,
             extended_hours=True
         )
-        logging.info(f"✅ Order placed: BUY {qty} {symbol} at ${price:.2f}")
+        logging.info(f"✅ Placed BUY order: {qty} {symbol} @ ${price:.2f}")
     except Exception as e:
-        logging.error(f"❌ Failed to place order for {symbol}: {e}")
+        logging.error(f"❌ Order failed for {symbol}: {e}")
 
 def run_strategy(symbols):
-    logging.info("🔁 Running strategy...")
+    logging.info("🚀 Running strategy...")
     cash = get_cash()
-    logging.info(f"💰 Cash available: ${cash:.2f}")
-    
+    logging.info(f"💵 Cash: ${cash:.2f}")
+
     for symbol in symbols:
-        logging.info(f"🔎 Checking {symbol}")
+        logging.info(f"🔍 Checking {symbol}")
         rsi = get_rsi(symbol)
         if rsi is None:
             continue
-        
+
         logging.info(f"{symbol} RSI: {rsi:.2f}")
         if rsi < RSI_THRESHOLD:
             price = get_price(symbol)
@@ -87,37 +87,43 @@ def run_strategy(symbols):
             if qty >= 1 and cash >= price * qty:
                 place_order(symbol, qty, price)
             else:
-                logging.warning(f"⚠️ Skipping {symbol}: insufficient funds or qty < 1")
+                logging.warning(f"⚠️ Not enough funds or qty too low for {symbol}")
         else:
-            logging.info(f"⏸️ Skipping {symbol} — RSI {rsi:.2f} is above threshold")
-    logging.info("✅ Strategy run complete.")
+            logging.info(f"⏸️ Skipping {symbol}, RSI {rsi:.2f} too high")
+
+    logging.info("✅ Strategy check complete.")
 
 def manage_open_trades():
-    logging.info("🔄 Managing open positions...")
+    logging.info("📊 Managing open positions...")
     try:
         positions = api.list_positions()
         for pos in positions:
             symbol = pos.symbol
-            qty = int(float(pos.qty))
-            if qty <= 0:
-                continue
-            pl_pct = float(pos.unrealized_plpc)
-            if pl_pct >= 0.06:
-                api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='day')
-                logging.info(f"🎯 Sold {symbol} — take profit hit ({pl_pct*100:.2f}%)")
-            elif pl_pct <= -0.03:
-                api.submit_order(symbol=symbol, qty=qty, side='sell', type='market', time_in_force='day')
-                logging.info(f"🛑 Sold {symbol} — stop loss hit ({pl_pct*100:.2f}%)")
+            try:
+                live_qty = int(float(api.get_position(symbol).qty))
+                if live_qty < 1:
+                    logging.warning(f"⚠️ Skipping {symbol}: 0 qty")
+                    continue
+
+                pl_pct = float(pos.unrealized_plpc)
+                if pl_pct >= 0.06:
+                    api.submit_order(symbol=symbol, qty=live_qty, side='sell', type='market', time_in_force='day')
+                    logging.info(f"🎯 Sold {symbol}: +{pl_pct*100:.2f}% profit")
+                elif pl_pct <= -0.03:
+                    api.submit_order(symbol=symbol, qty=live_qty, side='sell', type='market', time_in_force='day')
+                    logging.info(f"🛑 Sold {symbol}: -{pl_pct*100:.2f}% loss")
+            except Exception as e:
+                logging.error(f"❌ Sell error for {symbol}: {e}")
     except Exception as e:
-        logging.error(f"❌ Error managing trades: {e}")
+        logging.error(f"❌ Failed to manage positions: {e}")
 
 if __name__ == "__main__":
     while True:
         try:
             run_strategy(SYMBOLS)
             manage_open_trades()
-            logging.info("🕒 Sleeping for 5 minutes...")
+            logging.info(f"⏳ Sleeping {SLEEP_SECONDS // 60} mins...\n")
             time.sleep(SLEEP_SECONDS)
         except Exception as e:
-            logging.error(f"Unhandled error: {e}")
+            logging.error(f"💥 Main loop error: {e}")
             time.sleep(30)
