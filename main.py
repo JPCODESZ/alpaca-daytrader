@@ -13,8 +13,8 @@ logging.basicConfig(
 )
 
 # === HARDCODED API CREDS ===
-API_KEY = "PKJA5OXADZI7EPNS5UER"
-API_SECRET = "a7WRbJuiJkNbe7fYlIf7n5UnlslSHZlruZTonQu8"
+API_KEY = "PKKZSPUPBKLW7U6EY9S2"
+API_SECRET = "u9e3ZLpN8Ov72Oh6Yca6MhBHfftJNNeKiKjXfBal"
 BASE_URL = "https://paper-api.alpaca.markets"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
@@ -108,11 +108,11 @@ def run():
 
         logging.info(f"📈 {symbol} price: ${price:.2f} | RSI: {rsi:.2f}")
 
-        if rsi < RSI_BUY:
-            submit_order(symbol, "buy", price)
-        elif has_position(symbol):
-            if rsi > RSI_SELL or should_exit_position(symbol, price):
+        if has_position(symbol):
+            if should_exit_position(symbol, price) or rsi > RSI_SELL:
                 submit_order(symbol, "sell", price)
+        elif rsi < RSI_BUY:
+            submit_order(symbol, "buy", price)
 
 while True:
     run()
