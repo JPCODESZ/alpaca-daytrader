@@ -69,6 +69,27 @@ def has_position(symbol):
     except:
         return False
 
+# === Smart profit/stop logic ===
+def should_exit_position(symbol, current_price):
+    try:
+        position = api.get_position(symbol)
+        avg_price = float(position.avg_entry_price)
+        change_pct = (current_price - avg_price) / avg_price * 100
+
+        logging.info(f"📊 {symbol} P/L %: {change_pct:.2f} (Avg: ${avg_price:.2f})")
+
+        if change_pct >= 5:
+            logging.info(f"🎯 Target hit for {symbol}, selling for profit.")
+            return True
+        elif change_pct <= -3:
+            logging.info(f"🛑 Stop-loss triggered for {symbol}, exiting position.")
+            return True
+        else:
+            return False
+    except Exception as e:
+        logging.error(f"❌ Error checking exit conditions for {symbol}: {e}")
+        return False
+
 # === Main Strategy Loop ===
 def run():
     logging.info("🔄 Checking account and stock prices...")
@@ -89,8 +110,9 @@ def run():
 
         if rsi < RSI_BUY:
             submit_order(symbol, "buy", price)
-        elif rsi > RSI_SELL and has_position(symbol):
-            submit_order(symbol, "sell", price)
+        elif has_position(symbol):
+            if rsi > RSI_SELL or should_exit_position(symbol, price):
+                submit_order(symbol, "sell", price)
 
 while True:
     run()
