@@ -4,3 +4,4 @@ ta
 schedule
 python-dotenv
 yfinance
+lxml
