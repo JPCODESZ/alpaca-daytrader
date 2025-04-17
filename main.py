@@ -5,6 +5,7 @@ import yfinance as yf
 from alpaca_trade_api.rest import REST
 from ta.momentum import RSIIndicator
 import pandas as pd
+import requests
 
 # === SETUP LOGGING ===
 logging.basicConfig(
@@ -16,31 +17,64 @@ logging.basicConfig(
 API_KEY = "PKKZSPUPBKLW7U6EY9S2"
 API_SECRET = "u9e3ZLpN8Ov72Oh6Yca6MhBHfftJNNeKiKjXfBal"
 BASE_URL = "https://paper-api.alpaca.markets"
+FMP_API_KEY = "eJI8bQkL1Ov2tS307tYaO0VTAaguLoNd"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
 # === STRATEGY SETTINGS ===
 RSI_BUY = 45
 RSI_SELL = 60
-SYMBOLS = ["AAPL", "TSLA", "NVDA", "TQQQ", "SOXL"]
 BAR_LIMIT = 100
-TRADE_PERCENTAGE = 0.10  # 10% of buying power per trade
+TRADE_PERCENTAGE = 0.10
+MAX_TICKERS = 500  # expanded to more than 100
 
-# === Get latest price and RSI using Yahoo Finance ===
-def get_price_and_rsi(symbol):
+# === Get RSI using Yahoo Finance ===
+def get_rsi(symbol):
     try:
         df = yf.Ticker(symbol).history(period="1d", interval="1m")
         if df.empty:
             logging.warning(f"⚠️ No data for {symbol}")
-            return None, None
+            return None
 
         close_prices = df['Close']
         rsi = RSIIndicator(close_prices).rsi().iloc[-1]
-        price = close_prices.iloc[-1]
-        return price, rsi
+        return rsi
     except Exception as e:
         logging.error(f"❌ Error getting RSI for {symbol}: {e}")
-        return None, None
+        return None
+
+# === AI scoring signal ===
+def get_ai_signal(symbol):
+    try:
+        url = f"https://financialmodelingprep.com/api/v4/score?symbol={symbol}&apikey={FMP_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
+        score = data.get('score', 0)
+        return float(score)
+    except:
+        return 0.0
+
+# === Get all tradable tickers from FMP ===
+def scan_all_stocks():
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/stock/list?apikey={FMP_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
+        tickers = [item["symbol"] for item in data if item.get("exchangeShortName") in ["NYSE", "NASDAQ"]]
+        logging.info(f"🔍 Loaded {len(tickers)} tradable tickers.")
+        return tickers[:MAX_TICKERS]
+    except Exception as e:
+        logging.error(f"❌ Error loading stock list: {e}")
+        return []
+
+# === Get current price ===
+def get_price(symbol):
+    try:
+        price = yf.Ticker(symbol).history(period="1d", interval="1m")['Close'].iloc[-1]
+        return price
+    except Exception as e:
+        logging.error(f"❌ Error fetching price for {symbol}: {e}")
+        return None
 
 # === Submit Order ===
 def submit_order(symbol, side, price):
@@ -92,6 +126,8 @@ def should_exit_position(symbol, current_price):
 
 # === Main Strategy Loop ===
 def run():
+    SYMBOLS = scan_all_stocks()
+
     logging.info("🔄 Checking account and stock prices...")
 
     try:
@@ -102,11 +138,17 @@ def run():
         return
 
     for symbol in SYMBOLS:
-        price, rsi = get_price_and_rsi(symbol)
+        price = get_price(symbol)
+        rsi = get_rsi(symbol)
+        ai_score = get_ai_signal(symbol)
+
         if price is None or rsi is None:
             continue
 
-        logging.info(f"📈 {symbol} price: ${price:.2f} | RSI: {rsi:.2f}")
+        logging.info(f"📈 {symbol} price: ${price:.2f} | RSI: {rsi:.2f} | AI Score: {ai_score:.2f}")
+
+        if ai_score < 0.3:
+            continue  # Skip low confidence
 
         if has_position(symbol):
             if should_exit_position(symbol, price) or rsi > RSI_SELL:
