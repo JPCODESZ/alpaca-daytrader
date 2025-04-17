@@ -90,4 +90,4 @@ def run():
 while True:
     run()
     logging.info("⏳ Waiting 60 seconds...")
-    time.sleep(60)
+    time.sleep(10)
