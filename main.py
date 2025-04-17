@@ -23,7 +23,8 @@ api = REST(API_KEY, API_SECRET, BASE_URL)
 RSI_BUY = 45
 RSI_SELL = 60
 TRADE_PERCENT = 0.10
-MAX_TICKERS = 500
+MAX_TICKERS = 3000
+POSITION_LOG = {}
 
 # === RSI via Yahoo Finance ===
 def get_rsi(symbol):
@@ -70,17 +71,26 @@ def trade(symbol, side, price):
         qty = max(1, int((bp * TRADE_PERCENT) / price))
         api.submit_order(symbol=symbol, qty=qty, side=side, type="market", time_in_force="gtc")
         logging.info(f"{side.upper()} {symbol} x{qty} @ ${price:.2f}")
+
+        if side == "buy":
+            POSITION_LOG[symbol] = {"entry": price, "qty": qty}
+        elif side == "sell" and symbol in POSITION_LOG:
+            entry = POSITION_LOG[symbol]['entry']
+            pnl = ((price - entry) / entry) * 100
+            logging.info(f"{symbol} sold for P/L: {pnl:.2f}%")
+            del POSITION_LOG[symbol]
     except Exception as e:
         logging.error(f"Trade error {symbol}: {e}")
 
 # === Check if should exit ===
 def should_exit(symbol, current):
     try:
-        pos = api.get_position(symbol)
-        avg = float(pos.avg_entry_price)
-        pnl = (current - avg) / avg * 100
-        logging.info(f"{symbol} P/L: {pnl:.2f}%")
-        return pnl >= 5 or pnl <= -3
+        if symbol in POSITION_LOG:
+            entry = POSITION_LOG[symbol]['entry']
+            pnl = (current - entry) / entry * 100
+            logging.info(f"{symbol} live P/L: {pnl:.2f}%")
+            return pnl >= 6 or pnl <= -2.5
+        return False
     except Exception as e:
         logging.error(f"Exit check error {symbol}: {e}")
         return False
@@ -113,5 +123,5 @@ def run():
 
 while True:
     run()
-    logging.info("Sleeping 60s...")
-    time.sleep(60)
+    logging.info("Sleeping 10s...")
+    time.sleep(10)
