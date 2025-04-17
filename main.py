@@ -26,6 +26,7 @@ SYMBOLS = ["AAPL", "TSLA", "NVDA", "TQQQ", "SOXL"]
 BAR_LIMIT = 100
 TRADE_AMOUNT = 1
 
+# === Get latest price and RSI using Yahoo Finance ===
 def get_price_and_rsi(symbol):
     try:
         df = yf.Ticker(symbol).history(period="1d", interval="1m")
@@ -41,6 +42,7 @@ def get_price_and_rsi(symbol):
         logging.error(f"❌ Error getting RSI for {symbol}: {e}")
         return None, None
 
+# === Submit Order ===
 def submit_order(symbol, side):
     try:
         api.submit_order(
@@ -54,6 +56,15 @@ def submit_order(symbol, side):
     except Exception as e:
         logging.error(f"❌ Trade error for {symbol}: {e}")
 
+# === Check if position exists ===
+def has_position(symbol):
+    try:
+        position = api.get_position(symbol)
+        return int(position.qty) > 0
+    except:
+        return False
+
+# === Main Strategy Loop ===
 def run():
     logging.info("🔄 Checking account and stock prices...")
 
@@ -73,7 +84,7 @@ def run():
 
         if rsi < RSI_BUY:
             submit_order(symbol, "buy")
-        elif rsi > RSI_SELL:
+        elif rsi > RSI_SELL and has_position(symbol):
             submit_order(symbol, "sell")
 
 while True:
