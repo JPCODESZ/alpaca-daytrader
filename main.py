@@ -1,7 +1,8 @@
 import os
 import time
 import logging
-from alpaca_trade_api.rest import REST, TimeFrame
+import yfinance as yf
+from alpaca_trade_api.rest import REST
 from ta.momentum import RSIIndicator
 import pandas as pd
 
@@ -11,13 +12,10 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
-# === LOAD ENV VARS ===
-API_KEY = os.getenv("APCA_API_KEY_ID")
-API_SECRET = os.getenv("APCA_API_SECRET_KEY")
-BASE_URL = os.getenv("APCA_API_BASE_URL")
-
-if not API_KEY or not API_SECRET or not BASE_URL:
-    raise ValueError("❌ Missing API credentials. Check environment variables.")
+# === HARDCODED API CREDS ===
+API_KEY = "PKJA5OXADZI7EPNS5UER"
+API_SECRET = "a7WRbJuiJkNbe7fYlIf7n5UnlslSHZlruZTonQu8"
+BASE_URL = "https://paper-api.alpaca.markets"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
@@ -25,23 +23,22 @@ api = REST(API_KEY, API_SECRET, BASE_URL)
 RSI_BUY = 45
 RSI_SELL = 60
 SYMBOLS = ["AAPL", "TSLA", "NVDA", "TQQQ", "SOXL"]
-TIMEFRAME = TimeFrame.Minute  # 1-minute bars
-BAR_LIMIT = 100  # for RSI calc
-TRADE_AMOUNT = 1  # shares per trade
+BAR_LIMIT = 100
+TRADE_AMOUNT = 1
 
-def get_rsi(symbol):
+def get_price_and_rsi(symbol):
     try:
-        bars = api.get_bars(symbol, TIMEFRAME, limit=BAR_LIMIT).df
-        if bars.empty:
+        df = yf.Ticker(symbol).history(period="1d", interval="1m")
+        if df.empty:
             logging.warning(f"⚠️ No data for {symbol}")
             return None, None
 
-        close_prices = bars['close']
+        close_prices = df['Close']
         rsi = RSIIndicator(close_prices).rsi().iloc[-1]
-        latest_price = close_prices.iloc[-1]
-        return latest_price, rsi
+        price = close_prices.iloc[-1]
+        return price, rsi
     except Exception as e:
-        logging.error(f"❌ Error fetching RSI for {symbol}: {e}")
+        logging.error(f"❌ Error getting RSI for {symbol}: {e}")
         return None, None
 
 def submit_order(symbol, side):
@@ -68,7 +65,7 @@ def run():
         return
 
     for symbol in SYMBOLS:
-        price, rsi = get_rsi(symbol)
+        price, rsi = get_price_and_rsi(symbol)
         if price is None or rsi is None:
             continue
 
