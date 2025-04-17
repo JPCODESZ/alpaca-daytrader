@@ -49,9 +49,13 @@ def get_ai_signal(symbol):
         url = f"https://financialmodelingprep.com/api/v4/score?symbol={symbol}&apikey={FMP_API_KEY}"
         response = requests.get(url)
         data = response.json()
-        score = data.get('score', 0)
-        return float(score)
-    except:
+        if isinstance(data, list) and len(data) > 0:
+            score = data[0].get('score', 0)
+            return float(score)
+        else:
+            return 0.0
+    except Exception as e:
+        logging.error(f"❌ Error fetching AI score for {symbol}: {e}")
         return 0.0
 
 # === Get all tradable tickers from FMP ===
@@ -116,7 +120,7 @@ def should_exit_position(symbol, current_price):
             logging.info(f"🎯 Target hit for {symbol}, selling for profit.")
             return True
         elif change_pct <= -3:
-            logging.info(f"🛑 Stop-loss triggered for {symbol}, exiting position.")
+            logging.info(f"🚩 Stop-loss triggered for {symbol}, exiting position.")
             return True
         else:
             return False
