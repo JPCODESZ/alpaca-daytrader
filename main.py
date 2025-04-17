@@ -24,7 +24,7 @@ RSI_BUY = 45
 RSI_SELL = 60
 SYMBOLS = ["AAPL", "TSLA", "NVDA", "TQQQ", "SOXL"]
 BAR_LIMIT = 100
-TRADE_AMOUNT = 1
+TRADE_PERCENTAGE = 0.10  # 10% of buying power per trade
 
 # === Get latest price and RSI using Yahoo Finance ===
 def get_price_and_rsi(symbol):
@@ -43,16 +43,21 @@ def get_price_and_rsi(symbol):
         return None, None
 
 # === Submit Order ===
-def submit_order(symbol, side):
+def submit_order(symbol, side, price):
     try:
+        account = api.get_account()
+        buying_power = float(account.buying_power)
+        trade_amount = buying_power * TRADE_PERCENTAGE
+        qty = max(1, int(trade_amount / price))
+
         api.submit_order(
             symbol=symbol,
-            qty=TRADE_AMOUNT,
+            qty=qty,
             side=side,
             type="market",
             time_in_force="gtc"
         )
-        logging.info(f"✅ {side.upper()} order submitted for {symbol}")
+        logging.info(f"✅ {side.upper()} order submitted for {symbol} with {qty} shares (~${qty * price:.2f})")
     except Exception as e:
         logging.error(f"❌ Trade error for {symbol}: {e}")
 
@@ -83,11 +88,11 @@ def run():
         logging.info(f"📈 {symbol} price: ${price:.2f} | RSI: {rsi:.2f}")
 
         if rsi < RSI_BUY:
-            submit_order(symbol, "buy")
+            submit_order(symbol, "buy", price)
         elif rsi > RSI_SELL and has_position(symbol):
-            submit_order(symbol, "sell")
+            submit_order(symbol, "sell", price)
 
 while True:
     run()
     logging.info("⏳ Waiting 60 seconds...")
-    time.sleep(10)
+    time.sleep(60)
