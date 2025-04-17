@@ -2,18 +2,18 @@ import os
 import time
 import logging
 import yfinance as yf
-from alpaca_trade_api.rest import REST
-from ta.momentum import RSIIndicator
 import pandas as pd
 import requests
+from alpaca_trade_api.rest import REST
+from ta.momentum import RSIIndicator
 
-# === SETUP LOGGING ===
+# === LOGGING ===
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
 )
 
-# === HARDCODED API CREDS ===
+# === API CONFIG ===
 API_KEY = "PKKZSPUPBKLW7U6EY9S2"
 API_SECRET = "u9e3ZLpN8Ov72Oh6Yca6MhBHfftJNNeKiKjXfBal"
 BASE_URL = "https://paper-api.alpaca.markets"
@@ -21,146 +21,114 @@ FMP_API_KEY = "eJI8bQkL1Ov2tS307tYaO0VTAaguLoNd"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
-# === STRATEGY SETTINGS ===
+# === SETTINGS ===
 RSI_BUY = 45
 RSI_SELL = 60
-BAR_LIMIT = 100
-TRADE_PERCENTAGE = 0.10
-MAX_TICKERS = 500  # expanded to more than 100
+TRADE_PERCENT = 0.10
+MAX_TICKERS = 500
 
-# === Get RSI using Yahoo Finance ===
+# === RSI via Yahoo Finance ===
 def get_rsi(symbol):
     try:
         df = yf.Ticker(symbol).history(period="1d", interval="1m")
         if df.empty:
-            logging.warning(f"⚠️ No data for {symbol}")
             return None
-
-        close_prices = df['Close']
-        rsi = RSIIndicator(close_prices).rsi().iloc[-1]
-        return rsi
+        close = df['Close']
+        return RSIIndicator(close).rsi().iloc[-1]
     except Exception as e:
-        logging.error(f"❌ Error getting RSI for {symbol}: {e}")
+        logging.error(f"RSI error {symbol}: {e}")
         return None
-
-# === AI scoring signal ===
-def get_ai_signal(symbol):
-    try:
-        url = f"https://financialmodelingprep.com/api/v4/score?symbol={symbol}&apikey={FMP_API_KEY}"
-        response = requests.get(url)
-        data = response.json()
-        if isinstance(data, list) and len(data) > 0:
-            score = data[0].get('score', 0)
-            return float(score)
-        else:
-            return 0.0
-    except Exception as e:
-        logging.error(f"❌ Error fetching AI score for {symbol}: {e}")
-        return 0.0
-
-# === Get all tradable tickers from FMP ===
-def scan_all_stocks():
-    try:
-        url = f"https://financialmodelingprep.com/api/v3/stock/list?apikey={FMP_API_KEY}"
-        response = requests.get(url)
-        data = response.json()
-        tickers = [item["symbol"] for item in data if item.get("exchangeShortName") in ["NYSE", "NASDAQ"]]
-        logging.info(f"🔍 Loaded {len(tickers)} tradable tickers.")
-        return tickers[:MAX_TICKERS]
-    except Exception as e:
-        logging.error(f"❌ Error loading stock list: {e}")
-        return []
 
 # === Get current price ===
 def get_price(symbol):
     try:
-        price = yf.Ticker(symbol).history(period="1d", interval="1m")['Close'].iloc[-1]
-        return price
+        df = yf.Ticker(symbol).history(period="1d", interval="1m")
+        return df['Close'].iloc[-1]
     except Exception as e:
-        logging.error(f"❌ Error fetching price for {symbol}: {e}")
+        logging.error(f"Price error {symbol}: {e}")
         return None
 
-# === Submit Order ===
-def submit_order(symbol, side, price):
+# === Get AI signal from FMP ===
+def get_ai_score(symbol):
     try:
-        account = api.get_account()
-        buying_power = float(account.buying_power)
-        trade_amount = buying_power * TRADE_PERCENTAGE
-        qty = max(1, int(trade_amount / price))
-
-        api.submit_order(
-            symbol=symbol,
-            qty=qty,
-            side=side,
-            type="market",
-            time_in_force="gtc"
-        )
-        logging.info(f"✅ {side.upper()} order submitted for {symbol} with {qty} shares (~${qty * price:.2f})")
+        url = f"https://financialmodelingprep.com/api/v4/score?symbol={symbol}&apikey={FMP_API_KEY}"
+        res = requests.get(url).json()
+        return float(res[0].get("score", 0)) if isinstance(res, list) and res else 0.0
     except Exception as e:
-        logging.error(f"❌ Trade error for {symbol}: {e}")
+        logging.error(f"AI score error {symbol}: {e}")
+        return 0.0
 
-# === Check if position exists ===
+# === Scan for stock symbols ===
+def scan_stocks():
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/stock/list?apikey={FMP_API_KEY}"
+        data = requests.get(url).json()
+        if not isinstance(data, list):
+            logging.error(f"Bad symbol data: {data}")
+            return []
+        return [x["symbol"] for x in data if x.get("exchangeShortName") in ["NYSE", "NASDAQ"]][:MAX_TICKERS]
+    except Exception as e:
+        logging.error(f"Scan error: {e}")
+        return []
+
+# === Check position ===
 def has_position(symbol):
     try:
-        position = api.get_position(symbol)
-        return int(position.qty) > 0
+        pos = api.get_position(symbol)
+        return int(pos.qty) > 0
     except:
         return False
 
-# === Smart profit/stop logic ===
-def should_exit_position(symbol, current_price):
+# === Submit order ===
+def trade(symbol, side, price):
     try:
-        position = api.get_position(symbol)
-        avg_price = float(position.avg_entry_price)
-        change_pct = (current_price - avg_price) / avg_price * 100
-
-        logging.info(f"📊 {symbol} P/L %: {change_pct:.2f} (Avg: ${avg_price:.2f})")
-
-        if change_pct >= 5:
-            logging.info(f"🎯 Target hit for {symbol}, selling for profit.")
-            return True
-        elif change_pct <= -3:
-            logging.info(f"🚩 Stop-loss triggered for {symbol}, exiting position.")
-            return True
-        else:
-            return False
+        bp = float(api.get_account().buying_power)
+        qty = max(1, int((bp * TRADE_PERCENT) / price))
+        api.submit_order(symbol=symbol, qty=qty, side=side, type="market", time_in_force="gtc")
+        logging.info(f"{side.upper()} {symbol} x{qty} @ ${price:.2f}")
     except Exception as e:
-        logging.error(f"❌ Error checking exit conditions for {symbol}: {e}")
+        logging.error(f"Trade error {symbol}: {e}")
+
+# === Check if should exit ===
+def should_exit(symbol, current):
+    try:
+        pos = api.get_position(symbol)
+        avg = float(pos.avg_entry_price)
+        pnl = (current - avg) / avg * 100
+        logging.info(f"{symbol} P/L: {pnl:.2f}%")
+        return pnl >= 5 or pnl <= -3
+    except Exception as e:
+        logging.error(f"Exit check error {symbol}: {e}")
         return False
 
-# === Main Strategy Loop ===
+# === Main run ===
 def run():
-    SYMBOLS = scan_all_stocks()
-
-    logging.info("🔄 Checking account and stock prices...")
-
+    symbols = scan_stocks()
+    logging.info("Checking market...")
     try:
-        account = api.get_account()
-        logging.info(f"💰 Cash: ${account.cash} | Buying Power: ${account.buying_power}")
+        acc = api.get_account()
+        logging.info(f"Cash: ${acc.cash} | Power: ${acc.buying_power}")
     except Exception as e:
-        logging.error(f"❌ Account fetch error: {e}")
+        logging.error(f"Account error: {e}")
         return
 
-    for symbol in SYMBOLS:
+    for symbol in symbols:
         price = get_price(symbol)
         rsi = get_rsi(symbol)
-        ai_score = get_ai_signal(symbol)
+        score = get_ai_score(symbol)
 
-        if price is None or rsi is None:
-            continue
+        if None in (price, rsi): continue
 
-        logging.info(f"📈 {symbol} price: ${price:.2f} | RSI: {rsi:.2f} | AI Score: {ai_score:.2f}")
-
-        if ai_score < 0.3:
-            continue  # Skip low confidence
+        logging.info(f"{symbol}: ${price:.2f} | RSI: {rsi:.2f} | AI: {score:.2f}")
+        if score < 0.3: continue
 
         if has_position(symbol):
-            if should_exit_position(symbol, price) or rsi > RSI_SELL:
-                submit_order(symbol, "sell", price)
+            if rsi > RSI_SELL or should_exit(symbol, price):
+                trade(symbol, "sell", price)
         elif rsi < RSI_BUY:
-            submit_order(symbol, "buy", price)
+            trade(symbol, "buy", price)
 
 while True:
     run()
-    logging.info("⏳ Waiting 60 seconds...")
+    logging.info("Sleeping 60s...")
     time.sleep(60)
