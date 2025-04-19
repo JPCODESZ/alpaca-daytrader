@@ -4,7 +4,6 @@ import logging
 import yfinance as yf
 import pandas as pd
 from alpaca_trade_api.rest import REST
-from ta.momentum import RSIIndicator
 
 # === LOGGING ===
 logging.basicConfig(
@@ -20,117 +19,113 @@ BASE_URL = "https://paper-api.alpaca.markets"
 api = REST(API_KEY, API_SECRET, BASE_URL)
 
 # === SETTINGS ===
-RSI_BUY = 45
-RSI_SELL = 60
 TRADE_PERCENT = 0.10
-MAX_TICKERS = 2000
-POSITION_LOG = {}
+MIN_RR = 2.5
+LOOKBACK = 50
+ZONE_MARGIN = 0.5  # extra room for stops
 
-# === Static NASDAQ + NYSE ticker list (top ~2000 based on market cap or volume) ===
-STATIC_TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B", "JPM", "V",
-    "UNH", "JNJ", "WMT", "XOM", "PG", "MA", "HD", "CVX", "LLY", "ABBV", "AVGO", "KO",
-    "PEP", "MRK", "BAC", "COST", "ADBE", "PFE", "TMO", "CSCO", "ABT", "ACN", "MCD",
-    "QCOM", "DHR", "VZ", "NEE", "TXN", "LIN", "INTC", "CRM", "NKE", "ORCL", "WFC",
-    "AMGN", "AMD", "LOW", "UPS", "SCHW", "PM", "MS", "RTX", "UNP", "GS", "IBM",
-    "ISRG", "CAT", "CVS", "MDT", "INTU", "SPGI", "DE", "BLK", "TGT", "PLD", "BKNG",
-    "ELV", "LMT", "SYK", "MO", "ADP", "C", "CI", "AMT", "ZTS", "NOW", "MMC", "GEHC",
-    "ADSK", "VRTX", "CB", "GM", "ADI", "FIS", "GILD", "MET", "USB", "ATVI", "REGN",
-    "AON", "FISV", "MAR", "PSX", "PNC", "HCA", "AEP", "SO", "TFC", "APD", "BIIB",
-    # ... (You can keep adding more tickers to expand to 2000)
-]
+# === WATCHLIST ===
+TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
 
-# === RSI via Yahoo Finance ===
-def get_rsi(symbol):
-    try:
-        df = yf.Ticker(symbol).history(period="1d", interval="1m")
-        if df.empty:
-            return None
-        close = df['Close']
-        return RSIIndicator(close).rsi().iloc[-1]
-    except Exception as e:
-        logging.error(f"RSI error {symbol}: {e}")
-        return None
+positions = {}
 
-# === Get current price ===
-def get_price(symbol):
-    try:
-        df = yf.Ticker(symbol).history(period="1d", interval="1m")
-        return df['Close'].iloc[-1]
-    except Exception as e:
-        logging.error(f"Price error {symbol}: {e}")
-        return None
+# === DETECT TREND ===
+def detect_trend(df):
+    highs = df['High']
+    lows = df['Low']
+    if highs.iloc[-1] > highs.iloc[-2] and lows.iloc[-1] > lows.iloc[-2]:
+        return "uptrend"
+    elif highs.iloc[-1] < highs.iloc[-2] and lows.iloc[-1] < lows.iloc[-2]:
+        return "downtrend"
+    return "sideways"
 
-# === Use static list ===
-def scan_stocks():
-    return STATIC_TICKERS[:MAX_TICKERS]
+# === FIND ZONE ===
+def find_demand_zone(df):
+    for i in range(len(df)-2, 0, -1):
+        body = abs(df['Close'].iloc[i] - df['Open'].iloc[i])
+        prev_bodies = abs(df['Close'].iloc[i-2:i] - df['Open'].iloc[i-2:i]).mean()
+        if body > 2 * prev_bodies and df['Close'].iloc[i] > df['Open'].iloc[i]:
+            return df['Low'].iloc[i-1], df['High'].iloc[i-1]
+    return None, None
 
-# === Check position ===
-def has_position(symbol):
-    try:
-        pos = api.get_position(symbol)
-        return int(pos.qty) > 0
-    except:
+def find_supply_zone(df):
+    for i in range(len(df)-2, 0, -1):
+        body = abs(df['Close'].iloc[i] - df['Open'].iloc[i])
+        prev_bodies = abs(df['Close'].iloc[i-2:i] - df['Open'].iloc[i-2:i]).mean()
+        if body > 2 * prev_bodies and df['Close'].iloc[i] < df['Open'].iloc[i]:
+            return df['Low'].iloc[i-1], df['High'].iloc[i-1]
+    return None, None
+
+# === CHECK RISK/REWARD ===
+def valid_rr(entry, stop, target):
+    risk = abs(entry - stop)
+    reward = abs(target - entry)
+    if risk == 0:
         return False
+    rr = reward / risk
+    return rr >= MIN_RR
 
-# === Submit order ===
-def trade(symbol, side, price):
+# === TRADE ===
+def trade(symbol, side, price, stop, target):
     try:
-        bp = float(api.get_account().buying_power)
+        acc = api.get_account()
+        bp = float(acc.buying_power)
         qty = max(1, int((bp * TRADE_PERCENT) / price))
-        api.submit_order(symbol=symbol, qty=qty, side=side, type="market", time_in_force="gtc")
-        logging.info(f"{side.upper()} {symbol} x{qty} @ ${price:.2f}")
 
-        if side == "buy":
-            POSITION_LOG[symbol] = {"entry": price, "qty": qty}
-        elif side == "sell" and symbol in POSITION_LOG:
-            entry = POSITION_LOG[symbol]['entry']
-            pnl = ((price - entry) / entry) * 100
-            logging.info(f"{symbol} sold for P/L: {pnl:.2f}%")
-            del POSITION_LOG[symbol]
+        api.submit_order(
+            symbol=symbol,
+            qty=qty,
+            side=side,
+            type="market",
+            time_in_force="gtc"
+        )
+
+        positions[symbol] = {
+            "side": side,
+            "entry": price,
+            "stop": stop,
+            "target": target,
+            "qty": qty
+        }
+
+        logging.info(f"TRADE: {side.upper()} {symbol} @ {price:.2f} | Stop: {stop:.2f} | Target: {target:.2f}")
     except Exception as e:
         logging.error(f"Trade error {symbol}: {e}")
 
-# === Check if should exit ===
-def should_exit(symbol, current):
-    try:
-        if symbol in POSITION_LOG:
-            entry = POSITION_LOG[symbol]['entry']
-            pnl = (current - entry) / entry * 100
-            logging.info(f"{symbol} live P/L: {pnl:.2f}%")
-            return pnl >= 6 or pnl <= -2.5
-        return False
-    except Exception as e:
-        logging.error(f"Exit check error {symbol}: {e}")
-        return False
-
-# === Main run ===
+# === RUN ===
 def run():
-    symbols = scan_stocks()
-    logging.info("Checking market...")
-    try:
-        acc = api.get_account()
-        logging.info(f"Cash: ${acc.cash} | Power: ${acc.buying_power}")
-    except Exception as e:
-        logging.error(f"Account error: {e}")
-        return
+    for symbol in TICKERS:
+        try:
+            df = yf.Ticker(symbol).history(period="5d", interval="5m")[-LOOKBACK:]
+            if df.empty:
+                continue
 
-    for symbol in symbols:
-        price = get_price(symbol)
-        rsi = get_rsi(symbol)
+            trend = detect_trend(df)
+            price = df['Close'].iloc[-1]
 
-        if None in (price, rsi):
-            continue
+            if trend == "uptrend":
+                low, high = find_demand_zone(df)
+                if low is None:
+                    continue
+                stop = low - ZONE_MARGIN
+                target = df['High'].max()
+                if low < price < high and valid_rr(price, stop, target):
+                    trade(symbol, "buy", price, stop, target)
 
-        logging.info(f"{symbol}: ${price:.2f} | RSI: {rsi:.2f}")
+            elif trend == "downtrend":
+                low, high = find_supply_zone(df)
+                if low is None:
+                    continue
+                stop = high + ZONE_MARGIN
+                target = df['Low'].min()
+                if low < price < high and valid_rr(price, stop, target):
+                    trade(symbol, "sell", price, stop, target)
 
-        if has_position(symbol):
-            if rsi > RSI_SELL or should_exit(symbol, price):
-                trade(symbol, "sell", price)
-        elif rsi < RSI_BUY:
-            trade(symbol, "buy", price)
+            logging.info(f"{symbol}: {price:.2f} | Trend: {trend}")
+        except Exception as e:
+            logging.error(f"{symbol} error: {e}")
 
 while True:
     run()
-    logging.info("Sleeping 10s...")
+    logging.info("⏳ Waiting 10 seconds...")
     time.sleep(10)
