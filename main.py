@@ -23,11 +23,19 @@ TRADE_PERCENT = 0.10
 MIN_RR = 2.5
 LOOKBACK = 50
 ZONE_MARGIN = 0.5  # extra room for stops
+BATCH_SIZE = 20
 
-# === WATCHLIST ===
-TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+# === TICKERS ===
+TICKERS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B", "JPM", "V",
+    "UNH", "JNJ", "WMT", "XOM", "PG", "MA", "HD", "CVX", "LLY", "ABBV",
+    "AVGO", "KO", "PEP", "MRK", "BAC", "COST", "ADBE", "PFE", "TMO", "CSCO",
+    "ABT", "ACN", "MCD", "QCOM", "DHR", "VZ", "NEE", "TXN", "LIN", "INTC",
+    "CRM", "NKE", "ORCL", "WFC", "AMGN", "AMD", "LOW", "UPS", "SCHW", "PM"
+]
 
 positions = {}
+batch_index = 0
 
 # === DETECT TREND ===
 def detect_trend(df):
@@ -94,7 +102,11 @@ def trade(symbol, side, price, stop, target):
 
 # === RUN ===
 def run():
-    for symbol in TICKERS:
+    global batch_index
+    batch = TICKERS[batch_index:batch_index+BATCH_SIZE]
+    batch_index = (batch_index + BATCH_SIZE) % len(TICKERS)
+
+    for symbol in batch:
         try:
             df = yf.Ticker(symbol).history(period="5d", interval="5m")[-LOOKBACK:]
             if df.empty:
