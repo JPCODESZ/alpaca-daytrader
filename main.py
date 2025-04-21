@@ -23,6 +23,9 @@ PROFIT_TARGET = 0.5   # 50% profit target
 STOP_LOSS = 0.2       # 20% stop loss
 TRADE_RISK = 0.10     # 10% of account equity per trade
 MAX_POSITIONS = 10
+ENTRY_ORDER_TYPE = "limit"  # Options: market, limit, stop
+USE_TRAILING_STOP = True
+TRAILING_PERCENT = 5  # Trailing stop percent if enabled
 
 # === LOAD US STOCK SYMBOLS ===
 TICKERS = pd.read_html("https://en.wikipedia.org/wiki/NASDAQ-100")[4]['Ticker'].tolist()
@@ -55,13 +58,29 @@ def trade(symbol, price, side):
         max_trade_value = equity * TRADE_RISK
         qty = max(1, int(max_trade_value / price))
 
-        api.submit_order(
-            symbol=symbol,
-            qty=qty,
-            side=side,
-            type="market",
-            time_in_force="gtc"
-        )
+        if USE_TRAILING_STOP:
+            api.submit_order(
+                symbol=symbol,
+                qty=qty,
+                side=side,
+                type="trailing_stop",
+                time_in_force="gtc",
+                trail_percent=TRAILING_PERCENT
+            )
+        else:
+            order_params = {
+                "symbol": symbol,
+                "qty": qty,
+                "side": side,
+                "type": ENTRY_ORDER_TYPE,
+                "time_in_force": "gtc"
+            }
+            if ENTRY_ORDER_TYPE == "limit":
+                order_params["limit_price"] = price
+            elif ENTRY_ORDER_TYPE == "stop":
+                order_params["stop_price"] = price
+
+            api.submit_order(**order_params)
 
         entry = price
         target = price * (1 + PROFIT_TARGET) if side == "buy" else price * (1 - PROFIT_TARGET)
@@ -103,7 +122,7 @@ def manage_positions():
 
 # === RUN LOOP ===
 def run():
-    for symbol in TICKERS[:150]:  # Limit to 150 for performance
+    for symbol in TICKERS[:150]:
         try:
             df = yf.Ticker(symbol).history(period="5d", interval="15m")
             if df.empty or symbol in positions:
