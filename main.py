@@ -12,8 +12,8 @@ logging.basicConfig(
 )
 
 # === API CONFIG ===
-API_KEY = os.getenv("APCA_API_KEY_ID") or "PKKZSPUPBKLW7U6EY9S2"
-API_SECRET = os.getenv("APCA_API_SECRET_KEY") or "u9e3ZLpN8Ov72Oh6Yca6MhBHfftJNNeKiKjXfBal"
+API_KEY = os.getenv("APCA_API_KEY_ID") or "PKT2O4O41F47DJWEBP45"
+API_SECRET = os.getenv("APCA_API_SECRET_KEY") or "qzZE3AuSnfTF7dxd5spkT4ZMrHkBwLSPw5P6LSn4"
 BASE_URL = os.getenv("APCA_API_BASE_URL") or "https://paper-api.alpaca.markets"
 
 api = REST(API_KEY, API_SECRET, BASE_URL)
@@ -24,13 +24,14 @@ STOP_LOSS = 0.2       # 20% stop loss
 TRADE_RISK = 0.10     # 10% of account equity per trade
 MAX_POSITIONS = 10
 
-# === LOAD STOCKS ===
-TICKERS = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]['Symbol'].tolist()
-TICKERS = [t.replace(".", "-") for t in TICKERS]  # Match Yahoo format
+# === LOAD US STOCK SYMBOLS ===
+TICKERS = pd.read_html("https://en.wikipedia.org/wiki/NASDAQ-100")[4]['Ticker'].tolist()
+TICKERS += pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]['Symbol'].tolist()
+TICKERS = list(set(t.replace(".", "-") for t in TICKERS))
 
 positions = {}
 
-# === DETECT STRONG BREAKOUT ===
+# === DETECT BREAKOUT ===
 def is_breakout(df):
     recent = df['Close'].iloc[-5:]
     avg_vol = df['Volume'].mean()
@@ -38,8 +39,16 @@ def is_breakout(df):
     strong_candle = recent[-1] > recent.max() - (recent.max() - recent.min()) * 0.2
     return volume_spike and strong_candle
 
-# === MANAGE ORDERS ===
-def trade(symbol, price):
+# === DETECT BREAKDOWN ===
+def is_breakdown(df):
+    recent = df['Close'].iloc[-5:]
+    avg_vol = df['Volume'].mean()
+    volume_spike = df['Volume'].iloc[-1] > 1.5 * avg_vol
+    weak_candle = recent[-1] < recent.min() + (recent.max() - recent.min()) * 0.2
+    return volume_spike and weak_candle
+
+# === PLACE ORDER ===
+def trade(symbol, price, side):
     try:
         acc = api.get_account()
         equity = float(acc.equity)
@@ -49,51 +58,66 @@ def trade(symbol, price):
         api.submit_order(
             symbol=symbol,
             qty=qty,
-            side="buy",
+            side=side,
             type="market",
             time_in_force="gtc"
         )
 
+        entry = price
+        target = price * (1 + PROFIT_TARGET) if side == "buy" else price * (1 - PROFIT_TARGET)
+        stop = price * (1 - STOP_LOSS) if side == "buy" else price * (1 + STOP_LOSS)
+
         positions[symbol] = {
-            "entry": price,
-            "target": price * (1 + PROFIT_TARGET),
-            "stop": price * (1 - STOP_LOSS),
-            "qty": qty
+            "entry": entry,
+            "target": target,
+            "stop": stop,
+            "qty": qty,
+            "side": side
         }
 
-        logging.info(f"BUY {symbol} @ {price:.2f} | Target: {price * (1 + PROFIT_TARGET):.2f} | Stop: {price * (1 - STOP_LOSS):.2f}")
+        logging.info(f"{side.upper()} {symbol} @ {entry:.2f} | Target: {target:.2f} | Stop: {stop:.2f}")
     except Exception as e:
         logging.error(f"Trade error {symbol}: {e}")
 
-# === MONITOR AND CLOSE ===
+# === MONITOR AND EXIT ===
 def manage_positions():
     for symbol, data in list(positions.items()):
         try:
             price = yf.Ticker(symbol).history(period="1d")['Close'].iloc[-1]
-            if price >= data['target']:
-                api.submit_order(symbol=symbol, qty=data['qty'], side="sell", type="market", time_in_force="gtc")
-                logging.info(f"TAKE PROFIT {symbol} @ {price:.2f}")
-                del positions[symbol]
-            elif price <= data['stop']:
-                api.submit_order(symbol=symbol, qty=data['qty'], side="sell", type="market", time_in_force="gtc")
-                logging.info(f"STOP LOSS {symbol} @ {price:.2f}")
+            hit_target = price >= data['target'] if data['side'] == "buy" else price <= data['target']
+            hit_stop = price <= data['stop'] if data['side'] == "buy" else price >= data['stop']
+
+            if hit_target or hit_stop:
+                api.submit_order(
+                    symbol=symbol,
+                    qty=data['qty'],
+                    side="sell" if data['side'] == "buy" else "buy",
+                    type="market",
+                    time_in_force="gtc"
+                )
+                reason = "TAKE PROFIT" if hit_target else "STOP LOSS"
+                logging.info(f"{reason} {symbol} @ {price:.2f}")
                 del positions[symbol]
         except Exception as e:
             logging.error(f"Manage error {symbol}: {e}")
 
 # === RUN LOOP ===
 def run():
-    for symbol in TICKERS[:100]:  # limit cycle for speed
+    for symbol in TICKERS[:150]:  # Limit to 150 for performance
         try:
             df = yf.Ticker(symbol).history(period="5d", interval="15m")
             if df.empty or symbol in positions:
                 continue
             price = df['Close'].iloc[-1]
-            if is_breakout(df) and len(positions) < MAX_POSITIONS:
-                trade(symbol, price)
+            if len(positions) < MAX_POSITIONS:
+                if is_breakout(df):
+                    trade(symbol, price, "buy")
+                elif is_breakdown(df):
+                    trade(symbol, price, "sell")
             logging.info(f"{symbol}: {price:.2f} | Checked")
         except Exception as e:
             logging.error(f"Scan error {symbol}: {e}")
+
     manage_positions()
 
 while True:
